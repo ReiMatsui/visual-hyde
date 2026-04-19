@@ -22,6 +22,8 @@ dependencies = [
     "tqdm>=4.66.0",
     # PDF processing
     "pymupdf>=1.24.0",
+    # Dashboard
+    "streamlit>=1.35.0",
     # Config & utilities
     "pydantic>=2.6.0",
     "pydantic-settings>=2.2.0",
