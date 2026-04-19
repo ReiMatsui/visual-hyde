@@ -120,10 +120,14 @@ class CorpusIndex:
         top_k: int = 10,
     ) -> list[list[SearchResult]]:
         """
-        Search for multiple queries in one FAISS call (faster than looping).
+        Search for multiple queries by looping over individual FAISS calls.
+
+        Using a per-query loop avoids FAISS batch-search crashes on Apple
+        Silicon (aarch64) where the C-extension can segfault with large batches.
 
         Args:
-            query_vectors: 2D float32 array of shape (N, embed_dim).
+            query_vectors: 2D float32 array of shape (N, embed_dim),
+                           or list of 1D arrays.
             top_k:         Number of results per query.
 
         Returns:
@@ -132,24 +136,8 @@ class CorpusIndex:
         if self._index is None:
             raise RuntimeError("Index not built.")
 
-        qvecs = query_vectors.astype(np.float32)
-        scores_matrix, indices_matrix = self._index.search(qvecs, top_k)
-
-        all_results: list[list[SearchResult]] = []
-        for scores_row, indices_row in zip(scores_matrix, indices_matrix):
-            results: list[SearchResult] = []
-            for rank, (score, idx) in enumerate(zip(scores_row, indices_row), start=1):
-                if idx < 0:
-                    continue
-                results.append(
-                    SearchResult(
-                        corpus_id=self._id_list[idx],
-                        score=float(score),
-                        rank=rank,
-                    )
-                )
-            all_results.append(results)
-        return all_results
+        vecs = np.asarray(query_vectors, dtype=np.float32)
+        return [self.search(vec, top_k=top_k) for vec in vecs]
 
     # ------------------------------------------------------------------
     # Persistence
