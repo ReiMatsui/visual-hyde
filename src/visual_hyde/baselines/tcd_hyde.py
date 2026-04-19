@@ -65,13 +65,13 @@ class TCDHyDERetriever(BaseRetriever):
 
     def __init__(
         self,
-        corpus_index: CorpusIndex,
-        clip_encoder: CLIPEncoder | None = None,
+        index: CorpusIndex,
+        encoder: CLIPEncoder | None = None,
         gen_settings: GenerationSettings | None = None,
         llm: BaseLLMClient | None = None,
     ) -> None:
-        self._index = corpus_index
-        self._encoder = clip_encoder or CLIPEncoder()
+        self._index = index
+        self._encoder = encoder or CLIPEncoder()
         self._gen = gen_settings or get_settings().generation
         self._llm: BaseLLMClient = llm or LLMClient(self._gen)
 
