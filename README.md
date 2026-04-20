@@ -261,6 +261,10 @@ VH_GEN_OPENAI_MODEL=gpt-4o-mini   # コスト節約には mini 推奨
 # Anthropic を使う場合
 VH_GEN_LLM_PROVIDER=anthropic
 VH_GEN_ANTHROPIC_API_KEY=sk-ant-...
+
+# HuggingFace（ViDoRe V2 など認証が必要なデータセットを使う場合）
+# トークン取得: https://huggingface.co/settings/tokens
+HF_TOKEN=hf_...
 ```
 
 ---

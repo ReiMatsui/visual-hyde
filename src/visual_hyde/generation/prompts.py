@@ -13,35 +13,51 @@ It only needs to capture chart type + structural pattern (trend shape).
 from __future__ import annotations
 
 MATPLOTLIB_SYSTEM = """\
-You are an expert data visualization assistant.
-Your task is to write Python matplotlib code that generates a chart image \
-representing the VISUAL PATTERN described by the user's query.
+You are a data visualization code generator for a retrieval system.
+Your output is executed automatically — any error causes pipeline failure.
 
-Rules:
-- Output ONLY valid Python code wrapped in triple backticks (```python ... ```)
-- Import only: matplotlib, numpy (already installed)
-- Use plt.savefig(output_path, dpi=100, bbox_inches='tight')
-  where output_path is provided as a variable in scope
-- DO NOT show, display, or plt.show() the figure
-- Use dummy/synthetic data — exact values do NOT matter
-- Focus on reproducing the chart TYPE and TREND SHAPE (e.g., upward line,
-  grouped bars, pie slices) described in the query
-- Keep the chart clean: add a title, axis labels, and a legend if needed
-- Figure size: figsize=(6.4, 4.8)
-- Use a professional color palette (e.g., tab10 or seaborn colors)
+══ MANDATORY OUTPUT FORMAT ══
+Wrap ALL code in a single ```python ... ``` block. Nothing outside the block.
+
+══ EXECUTION ENVIRONMENT ══
+- Available imports: matplotlib, numpy ONLY (no pandas, seaborn, scipy, etc.)
+- The variable `output_path` (str) is pre-defined in scope — DO NOT redefine it
+- matplotlib backend is already set to 'Agg' — DO NOT call matplotlib.use()
+
+══ REQUIRED CALLS (both must appear) ══
+1. plt.savefig(output_path, dpi=100, bbox_inches='tight')
+2. plt.close()   ← prevents memory leaks across batch runs
+
+══ FORBIDDEN ══
+- plt.show()  — blocks the process
+- Any file I/O, network calls, or imports beyond matplotlib/numpy
+- Interactive widgets or animations
+- Redefining output_path
+
+══ GOAL ══
+Reproduce the VISUAL STRUCTURE implied by the query using synthetic data.
+- Choose the right chart type (line, bar, pie, scatter, heatmap, etc.)
+- Match the general trend/pattern (increasing, decreasing, grouped, proportional)
+- Use realistic but dummy axis labels and a descriptive title
+- Figure: figsize=(6.4, 4.8), tab10 color palette
+- Keep it clean and readable
+
+Exact data values do NOT matter — only visual structure matters.
 """
 
 MATPLOTLIB_USER = """\
 Query: {query}
 
-Generate matplotlib Python code that creates a chart visually representing
-the pattern/structure described in this query.
-Focus on:
-1. Correct chart type (line, bar, scatter, pie, etc.)
-2. Correct trend direction/shape (rising, falling, grouped, etc.)
-3. Realistic but dummy axis labels
+Write matplotlib Python code (inside ```python ... ```) that creates a chart
+capturing the visual structure implied by this query.
 
-Variable `output_path` is already defined in the execution scope.
+Checklist before outputting:
+✓ Code is inside ```python ... ```
+✓ Only matplotlib and numpy are imported
+✓ plt.savefig(output_path, dpi=100, bbox_inches='tight') is called
+✓ plt.close() is called at the end
+✓ plt.show() does NOT appear
+✓ output_path is NOT redefined
 """
 
 IMAGE_GEN_PROMPT = """\

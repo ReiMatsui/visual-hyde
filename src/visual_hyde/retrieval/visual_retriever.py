@@ -51,6 +51,15 @@ class VisualHyDERetriever(BaseRetriever):
     def name(self) -> str:
         return f"visual_hyde_{self._method.value}"
 
+    @property
+    def generation_failures(self) -> list[dict]:
+        """Return recorded chart generation failures from the underlying generator."""
+        return getattr(self._generator, "failures", [])
+
+    @property
+    def generation_failure_rate(self) -> float:
+        return getattr(self._generator, "failure_rate", 0.0)
+
     def retrieve_one(self, query: QueryItem, top_k: int = 10) -> RetrievalOutput:
         # Step 1: Generate hypothetical chart
         chart: GeneratedChart = self._generator.generate(query.id, query.text)

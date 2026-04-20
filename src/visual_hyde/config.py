@@ -74,6 +74,25 @@ class QueryType(str, Enum):
 # ---------------------------------------------------------------------------
 
 
+class HuggingFaceSettings(BaseSettings):
+    """HuggingFace credentials. Used for gated datasets (e.g. ViDoRe V2)."""
+
+    model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
+
+    hf_token: str = ""
+
+    def apply(self) -> None:
+        """Set HF_TOKEN so datasets / huggingface_hub pick it up automatically."""
+        import os
+        if self.hf_token:
+            os.environ.setdefault("HF_TOKEN", self.hf_token)
+            try:
+                from huggingface_hub import login
+                login(token=self.hf_token, add_to_git_credential=False)
+            except Exception:
+                pass  # HF_TOKEN env var alone is sufficient for most datasets
+
+
 class PathSettings(BaseSettings):
     """File-system paths. Override via env vars prefixed with VH_."""
 
@@ -201,6 +220,8 @@ class Settings:
     """Top-level settings container. Use as a singleton via `get_settings()`."""
 
     def __init__(self) -> None:
+        self.huggingface = HuggingFaceSettings()
+        self.huggingface.apply()  # HF_TOKEN を環境変数に反映
         self.paths = PathSettings()
         self.embedding = EmbeddingSettings()
         self.generation = GenerationSettings()

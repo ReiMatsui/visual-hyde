@@ -82,6 +82,7 @@ def run(
     colpali_results: Path = typer.Option(None, help="Pre-computed ColPali JSONL path"),
     skip_image_gen: bool = typer.Option(False, help="Skip Nano Banana (requires Gemini API key)"),
     output_dir: Path = typer.Option(None, help="Override output directory"),
+    domains: str = typer.Option(None, help="Comma-separated ViDoRe domains, e.g. 'arxivqa' or 'infovqa,arxivqa'"),
     log_level: str = typer.Option("INFO", help="Logging level"),
 ) -> None:
     setup_logging(log_level)
@@ -89,19 +90,25 @@ def run(
     settings.ensure_ready()
 
     dataset_enum = Dataset(dataset)
+    # Parse domains option (only used for vidore_v2)
+    domain_list = [d.strip() for d in domains.split(",")] if domains else None
+
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_dir = output_dir or (settings.paths.results_dir / dataset / run_id)
+    # Include domain tag in output dir name for easy identification
+    domain_tag = f"_{domains.replace(',', '-')}" if domains else ""
+    out_dir = output_dir or (settings.paths.results_dir / dataset / f"{run_id}{domain_tag}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    index_dir = settings.paths.indices_dir / dataset
+    # Separate FAISS index per domain combination to avoid cache collisions
+    index_dir = settings.paths.indices_dir / dataset / (domains or "default")
 
     # ------------------------------------------------------------------
     # 1. Load dataset
     # ------------------------------------------------------------------
     console.rule(f"[bold blue]Phase 1: {dataset.upper()} — Loading data")
-    corpus_items, query_items = load_dataset_for_retrieval(
-        dataset_enum,
-        max_queries=max_queries,
-    )
+    load_kwargs: dict = {"max_queries": max_queries}
+    if domain_list:
+        load_kwargs["domains"] = domain_list
+    corpus_items, query_items = load_dataset_for_retrieval(dataset_enum, **load_kwargs)
     console.print(f"Corpus: {len(corpus_items)} items | Queries: {len(query_items)}")
 
     # ------------------------------------------------------------------
@@ -157,12 +164,26 @@ def run(
     # ------------------------------------------------------------------
     # 5. Save & display results
     # ------------------------------------------------------------------
-    runner.save_results(results, out_dir)
+    runner.save_results(results, out_dir, retrievers=retrievers)
     console.print(f"\n[green]Results saved to: {out_dir}[/green]")
 
     _print_summary_table(results.metrics)
     console.print("\n[bold]By Query Type:[/bold]")
     _print_nested_table(results.per_query_type)
+
+    # ── Generation failure summary ─────────────────────────────────────
+    failure_keys = [k for k in results.metadata if k.endswith("_generation_failures")]
+    if failure_keys:
+        console.print("\n[bold]Chart Generation Failures:[/bold]")
+        for key in failure_keys:
+            name = key.replace("_generation_failures", "")
+            n_failed = results.metadata[key]
+            rate = results.metadata.get(f"{name}_generation_failure_rate", 0)
+            types = results.metadata.get(f"{name}_failure_types", {})
+            console.print(
+                f"  {name}: [red]{n_failed}[/red] failures "
+                f"({rate*100:.1f}%) — {types}"
+            )
 
 
 def _print_summary_table(metrics: dict[str, dict[str, float]]) -> None:

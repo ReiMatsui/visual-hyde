@@ -12,11 +12,13 @@ restricted environment. Only matplotlib and numpy are available.
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import sys
 import tempfile
 import textwrap
+from datetime import datetime, timezone
 from pathlib import Path
 
 from visual_hyde.config import GenerationSettings, get_settings
@@ -26,6 +28,24 @@ from visual_hyde.logging import get_logger
 from visual_hyde.types import GeneratedChart
 
 logger = get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Error classification
+# ---------------------------------------------------------------------------
+
+def _classify_error(e: Exception, stderr: str = "") -> str:
+    """Classify a chart generation error into a short category string."""
+    if isinstance(e, ValueError) and "No code block" in str(e):
+        return "code_extraction_failed"
+    if isinstance(e, subprocess.TimeoutExpired):
+        return "timeout"
+    msg = str(e).lower()
+    if "exit" in msg or "syntaxerror" in stderr.lower() or "traceback" in stderr.lower():
+        return "execution_error"
+    if "not created" in msg:
+        return "no_output_file"
+    return "unknown"
 
 # ---------------------------------------------------------------------------
 # Code extraction helpers
@@ -92,12 +112,18 @@ class MatplotlibChartGenerator:
         settings: GenerationSettings | None = None,
         cache_dir: Path | None = None,
         llm: BaseLLMClient | None = None,
+        failure_log_path: Path | None = None,
     ) -> None:
         self._settings = settings or get_settings().generation
         cfg_paths = get_settings().paths
         self._cache_dir = cache_dir or cfg_paths.generated_charts_dir / "matplotlib"
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._vlm: BaseLLMClient = llm or LLMClient(self._settings)
+
+        # Failure tracking
+        self._failure_log_path = failure_log_path
+        self._failures: list[dict] = []
+        self._success_count: int = 0
 
     def generate(self, query_id: str, query: str) -> GeneratedChart:
         """
@@ -110,6 +136,7 @@ class MatplotlibChartGenerator:
 
         # Return cached result if available
         if save_path.exists():
+            self._success_count += 1
             return GeneratedChart(
                 query_id=query_id,
                 image_path=save_path,
@@ -117,9 +144,12 @@ class MatplotlibChartGenerator:
                 generation_ok=True,
             )
 
+        code: str | None = None
+        stderr_capture: str = ""
         try:
             code = self._get_matplotlib_code(query)
             self._execute_code(code, save_path)
+            self._success_count += 1
             return GeneratedChart(
                 query_id=query_id,
                 image_path=save_path,
@@ -127,16 +157,21 @@ class MatplotlibChartGenerator:
                 generation_ok=True,
                 code=code,
             )
+        except subprocess.CalledProcessError as e:
+            stderr_capture = getattr(e, "stderr", "") or ""
+            self._record_failure(query_id, query, e, code, stderr_capture)
         except Exception as e:
-            logger.warning(f"Chart generation failed for query '{query_id}': {e}")
-            fallback = self._make_fallback_chart(save_path, query)
-            return GeneratedChart(
-                query_id=query_id,
-                image_path=fallback,
-                method="matplotlib",
-                generation_ok=False,
-                error=str(e),
-            )
+            self._record_failure(query_id, query, e, code, stderr_capture)
+
+        fallback = self._make_fallback_chart(save_path, query)
+        last_failure = self._failures[-1] if self._failures else {}
+        return GeneratedChart(
+            query_id=query_id,
+            image_path=fallback,
+            method="matplotlib",
+            generation_ok=False,
+            error=last_failure.get("error_message", "unknown error"),
+        )
 
     def generate_batch(
         self,
@@ -152,6 +187,48 @@ class MatplotlibChartGenerator:
             pairs = tqdm(list(pairs), desc="Generating charts (matplotlib)")
 
         return [self.generate(qid, q) for qid, q in pairs]
+
+    # ------------------------------------------------------------------
+    # Failure tracking
+    # ------------------------------------------------------------------
+
+    @property
+    def failures(self) -> list[dict]:
+        """All recorded generation failures (read-only view)."""
+        return list(self._failures)
+
+    @property
+    def failure_rate(self) -> float:
+        total = self._success_count + len(self._failures)
+        return len(self._failures) / total if total > 0 else 0.0
+
+    def _record_failure(
+        self,
+        query_id: str,
+        query: str,
+        exc: Exception,
+        code: str | None,
+        stderr: str = "",
+    ) -> None:
+        error_type = _classify_error(exc, stderr)
+        record = {
+            "query_id": query_id,
+            "query": query[:200],
+            "error_type": error_type,
+            "error_message": str(exc)[:500],
+            "stderr": stderr[:300] if stderr else "",
+            "generated_code_snippet": (code[:300] if code else None),
+            "timestamp": datetime.now(tz=timezone.utc).isoformat(),
+        }
+        self._failures.append(record)
+        logger.warning(
+            "Chart generation failed [%s] for '%s': %s",
+            error_type, query_id, str(exc)[:120],
+        )
+        # Write to file in real-time so partial logs survive crashes
+        if self._failure_log_path:
+            with self._failure_log_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -183,11 +260,11 @@ class MatplotlibChartGenerator:
                 timeout=self._settings.generation_timeout_s,
             )
             if result.returncode != 0:
-                raise RuntimeError(
-                    f"Chart script failed (exit {result.returncode}):\n{result.stderr[:500]}"
-                )
+                err = subprocess.CalledProcessError(result.returncode, script_path)
+                err.stderr = result.stderr  # type: ignore[attr-defined]
+                raise err
             if not save_path.exists():
-                raise RuntimeError(f"Script ran but {save_path} was not created")
+                raise RuntimeError(f"Script ran successfully but {save_path} was not created")
         finally:
             Path(script_path).unlink(missing_ok=True)
 

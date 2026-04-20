@@ -210,21 +210,47 @@ class ExperimentRunner:
                 outputs, self._queries, self._corpus_items, k_values
             )
 
+            # ── Chart generation failure stats ────────────────────────────
+            if hasattr(retriever, "generation_failures"):
+                failures = retriever.generation_failures
+                failure_rate = retriever.generation_failure_rate
+                n_failed = len(failures)
+                results.metadata[f"{name}_generation_failures"] = n_failed
+                results.metadata[f"{name}_generation_failure_rate"] = round(failure_rate, 4)
+                # Summarise by error type
+                from collections import Counter
+                type_counts = Counter(f["error_type"] for f in failures)
+                results.metadata[f"{name}_failure_types"] = dict(type_counts)
+                if n_failed:
+                    logger.warning(
+                        "Retriever %s: %d/%d chart generations failed (%.1f%%). "
+                        "Types: %s",
+                        name, n_failed, len(self._queries),
+                        failure_rate * 100, dict(type_counts),
+                    )
+
             logger.info(
                 "Retriever %s done. Metrics: %s", name, results.metrics[name]
             )
 
         return results
 
-    def save_results(self, results: ExperimentResults, output_dir: Path) -> None:
+    def save_results(
+        self,
+        results: ExperimentResults,
+        output_dir: Path,
+        retrievers: list | None = None,
+    ) -> None:
         """
         Serialise ExperimentResults to ``<output_dir>/results.json``.
-
-        The output directory is created if it does not exist.
+        Also saves chart generation failure logs to
+        ``<output_dir>/<retriever>_generation_failures.jsonl`` when available.
 
         Args:
             results:    The experiment results to persist.
-            output_dir: Directory in which to write ``results.json``.
+            output_dir: Directory in which to write result files.
+            retrievers: Optional list of retriever instances (used to extract
+                        failure details for JSONL logs).
         """
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -236,6 +262,23 @@ class ExperimentRunner:
             json.dump(payload, fh, indent=2, ensure_ascii=False)
 
         logger.info("Results saved to %s", output_path)
+
+        # ── Save generation failure JSONL logs ────────────────────────────
+        if retrievers:
+            for retriever in retrievers:
+                if not hasattr(retriever, "generation_failures"):
+                    continue
+                failures = retriever.generation_failures
+                if not failures:
+                    continue
+                log_path = output_dir / f"{retriever.name}_generation_failures.jsonl"
+                with log_path.open("w", encoding="utf-8") as fh:
+                    for record in failures:
+                        fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+                logger.info(
+                    "Generation failure log saved to %s (%d entries)",
+                    log_path, len(failures),
+                )
 
     def load_results(self, output_dir: Path) -> ExperimentResults:
         """
